@@ -30,7 +30,7 @@ userInput.addEventListener('keypress', (e) => {
 // Function to create the navigation button
 function createNavButton() {
     const navButton = document.createElement('a');
-    navButton.href = 'https://www.na.edu/';
+    navButton.href = 'https://helpdesk.na.edu/'
     navButton.className = 'nau-nav-button';
     navButton.innerHTML = `
         <i class="bi bi-arrow-left"></i>
