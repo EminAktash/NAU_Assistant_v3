@@ -1,5 +1,7 @@
-// Set API URL (change this to your actual backend URL when deployed)
-const API_URL = 'http://localhost:5000/api';
+// Set API URL to automatically detect whether we're in production or development
+const API_URL = window.location.hostname === 'localhost' ? 
+                'http://localhost:5000/api' : 
+                `${window.location.origin}/api`;
 
 // State variables
 let currentFollowUpId = null; // Track the current follow-up question
