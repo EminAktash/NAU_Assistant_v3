@@ -31,10 +31,9 @@ userInput.addEventListener('keypress', (e) => {
 function createNavButton() {
     const navButton = document.createElement('a');
     navButton.href = 'https://www.na.edu/';
-    navButton.target = '_blank';
     navButton.className = 'nau-nav-button';
     navButton.innerHTML = `
-        <img src="https://www.na.edu/wp-content/uploads/2022/12/nau-logo.png" alt="NAU Logo">
+        <i class="bi bi-arrow-left"></i>
     `;
     
     // Add style for the button
@@ -44,25 +43,27 @@ function createNavButton() {
             position: fixed;
             top: 20px;
             left: 20px;
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
-            background-color: white;
+            background-color: #003366;
+            color: white;
             display: flex;
             justify-content: center;
             align-items: center;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
             z-index: 1000;
             transition: transform 0.2s ease;
+            text-decoration: none;
         }
         
         .nau-nav-button:hover {
             transform: scale(1.1);
+            background-color: #004080;
         }
         
-        .nau-nav-button img {
-            width: 40px;
-            height: auto;
+        .nau-nav-button i {
+            font-size: 20px;
         }
     `;
     
