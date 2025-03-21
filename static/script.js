@@ -1,5 +1,11 @@
 // Set API URL (change this to your actual backend URL when deployed)
-const API_URL = 'http://https://nau-assistant-v3.vercel.app/api';
+
+// If os.environment("Environnement") == "DEV":
+// API address == localhost:5000
+// If os.environment("Environnement") == "PROD":
+// API address == https://nau-assistant-v3.vercel.app
+
+const API_URL = 'https://nau-assistant-v3.vercel.app/api';
 
 // State variables
 let currentFollowUpId = null; // Track the current follow-up question
