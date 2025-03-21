@@ -1,7 +1,5 @@
-// Set API URL to automatically detect whether we're in production or development
-const API_URL = window.location.hostname === 'localhost' ? 
-                'http://localhost:5000/api' : 
-                `${window.location.origin}/api`;
+// Set API URL (change this to your actual backend URL when deployed)
+const API_URL = 'http://localhost:5000/api';
 
 // State variables
 let currentFollowUpId = null; // Track the current follow-up question
@@ -92,8 +90,6 @@ async function sendMessage() {
             currentFollowUpId = null;
         }
 
-        console.log('Sending request to:', `${API_URL}/chat`);
-        
         // Send message to API
         const response = await fetch(`${API_URL}/chat`, {
             method: 'POST',
@@ -107,13 +103,7 @@ async function sendMessage() {
         const loadingElement = document.getElementById(loadingId);
         if (loadingElement) loadingElement.remove();
 
-        if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
-        }
-
         const data = await response.json();
-        
-        console.log('Received response:', data);
 
         // Add assistant message to UI
         const assistantMessage = {
