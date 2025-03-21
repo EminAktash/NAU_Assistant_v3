@@ -1,11 +1,9 @@
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
+from flask import Flask, request, jsonify, Response
 import os
 import json
 import time
 import re
-import openai
-from dotenv import load_dotenv
+import traceback
 
 # Set up logging
 import logging
@@ -19,21 +17,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+from flask_cors import CORS
 CORS(app)
 
-# Configure OpenAI client
-load_dotenv()
+# Try to get OpenAI API key
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    logger.warning("python-dotenv not installed, using environment variables directly")
 
 # Get API key from environment variables
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    # For Vercel, try to get from environment directly
-    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-    if not OPENAI_API_KEY:
-        logger.warning("Missing OPENAI_API_KEY environment variable. API calls will fail.")
-    
-# Initialize the OpenAI client with the API key
-openai.api_key = OPENAI_API_KEY
+    logger.warning("Missing OPENAI_API_KEY environment variable. API calls will fail.")
+
+# Initialize the OpenAI client
+try:
+    import openai
+    openai.api_key = OPENAI_API_KEY
+except ImportError:
+    logger.error("OpenAI package not installed")
 
 # Store chat history (in-memory for Vercel)
 chat_history = {}
@@ -407,11 +411,28 @@ def process_follow_up_response(follow_up, user_response):
     # Default general response if we can't determine what the user meant
     return "I'm sorry, I'm not sure how to help with that specific request. Is there something else about North American University that I can assist you with?"
 
+# Index route - return a simple message for health check
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({"status": "API is running"})
+
 # Chat API endpoint
 @app.route('/api/chat', methods=['POST'])
 def chat():
     try:
-        data = request.json
+        # Log request headers for debugging
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Request method: {request.method}")
+        logger.info(f"Request URL: {request.url}")
+        
+        # Log request body for debugging
+        try:
+            data = request.json
+            logger.info(f"Request data: {data}")
+        except Exception as e:
+            logger.error(f"Error parsing JSON data: {str(e)}")
+            return jsonify({"error": "Invalid JSON data"}), 400
+        
         chat_id = data.get('chat_id', 'default')
         query = data.get('query', '')
         follow_up_to = data.get('follow_up_to', None)
@@ -542,22 +563,34 @@ ALWAYS be thorough, friendly, and make sure to provide ALL relevant details."""
             try:
                 logger.info("Calling OpenAI API...")
                 
-                # Use OpenAI API instead of Anthropic
+                # Use OpenAI API
                 response = openai.ChatCompletion.create(
-                    model="gpt-4",
+                    model="gpt-3.5-turbo",  # Using 3.5-turbo instead of gpt-4 for better stability
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Context about North American University: {context}\n\nUser Question: {query}"}
                     ],
-                    max_tokens=1000,
-                    temperature=0
+                    max_tokens=800,
+                    temperature=0.2
                 )
                 
+                logger.info("OpenAI API response status: Success")
                 answer = response.choices[0].message["content"]
-                logger.info("Successfully received response from OpenAI API")
+                logger.info("Successfully parsed OpenAI API response")
             except Exception as api_error:
-                logger.error(f"API error: {str(api_error)}")
-                answer = "I apologize, but I'm having trouble processing your request at the moment. Please try again later or contact NAU directly for assistance."
+                logger.error(f"OpenAI API error: {str(api_error)}")
+                logger.error(f"Error trace: {traceback.format_exc()}")
+                
+                # Fallback response in case of API error
+                answer = """Thank you for your question about North American University. 
+
+I apologize, but I'm having trouble connecting to my knowledge base at the moment. For the most accurate and up-to-date information, I recommend:
+
+1. Visiting the North American University website at https://www.na.edu
+2. Contacting the admissions office directly at admissions@na.edu
+3. Calling the university at (832) 230-5555
+
+Is there something else about NAU that I can help you with?"""
             
             sources = ["https://www.na.edu"]
             
@@ -579,7 +612,6 @@ ALWAYS be thorough, friendly, and make sure to provide ALL relevant details."""
             })
     
     except Exception as e:
-        import traceback
         logger.error(f"Error processing query: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": f"Server error: {str(e)}"}), 500
@@ -623,15 +655,21 @@ def create_chat():
     chat_history[chat_id] = []
     return jsonify({"chat_id": chat_id})
 
-# Serve the static files for serverless deployment
-from http.server import BaseHTTPRequestHandler
-
-# Initialize Flask app for serverless
-def handler(event, context):
+# This is needed for Vercel serverless function
+def handler(request):
     """
-    This is the main handler function for Vercel serverless.
+    This is the handler function for Vercel serverless functions.
+    It's called when the function is invoked.
     """
-    return app(event, context)
+    logger.info("Handler function called")
+    with app.request_context(request.environ):
+        try:
+            rv = app.full_dispatch_request()
+            return rv
+        except Exception as e:
+            logger.error(f"Exception in handler: {str(e)}")
+            logger.error(traceback.format_exc())
+            return jsonify({"error": str(e)}), 500
 
 # This is needed for local development
 if __name__ == '__main__':
