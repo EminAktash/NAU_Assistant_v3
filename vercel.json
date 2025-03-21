@@ -12,11 +12,16 @@
   ],
   "routes": [
     {
-      "src": "index",
+      "src": "/api/chat",
+      "methods": ["POST", "OPTIONS"],
       "dest": "index.py"
     },
     {
-      "src": "/(.+\\.[a-z]+)$",
+      "src": "/static/(.*)",
+      "dest": "/static/$1"
+    },
+    {
+      "src": "/(.*\\.[a-z]+)$",
       "dest": "/static/$1"
     },
     {
