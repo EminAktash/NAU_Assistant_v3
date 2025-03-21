@@ -27,7 +27,10 @@ load_dotenv()
 # Get API key from environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    raise ValueError("Missing OPENAI_API_KEY environment variable. Please set it in your .env file.")
+    # For Vercel, try to get from environment directly if .env loading fails
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+    if not OPENAI_API_KEY:
+        logger.warning("Missing OPENAI_API_KEY environment variable. API calls will fail.")
     
 # Initialize the OpenAI client with the API key
 openai.api_key = OPENAI_API_KEY
@@ -404,6 +407,7 @@ def process_follow_up_response(follow_up, user_response):
     # Default general response if we can't determine what the user meant
     return "I'm sorry, I'm not sure how to help with that specific request. Is there something else about North American University that I can assist you with?"
 
+# Serve static files - updated for Vercel deployment
 @app.route('/')
 def index():
     return send_from_directory('static', 'index.html')
@@ -626,6 +630,18 @@ def create_chat():
     chat_history[chat_id] = []
     return jsonify({"chat_id": chat_id})
 
+# For Vercel serverless deployment, add this handler
+from http.server import BaseHTTPRequestHandler
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write('API is running'.encode())
+        return
+
+# Production ready entry point
 if __name__ == '__main__':
-    logger.info("Starting North American University AI Assistant")
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
