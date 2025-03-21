@@ -92,6 +92,8 @@ async function sendMessage() {
             currentFollowUpId = null;
         }
 
+        console.log('Sending request to:', `${API_URL}/chat`);
+        
         // Send message to API
         const response = await fetch(`${API_URL}/chat`, {
             method: 'POST',
@@ -106,6 +108,8 @@ async function sendMessage() {
         if (loadingElement) loadingElement.remove();
 
         const data = await response.json();
+        
+        console.log('Received response:', data);
 
         // Add assistant message to UI
         const assistantMessage = {
