@@ -107,6 +107,10 @@ async function sendMessage() {
         const loadingElement = document.getElementById(loadingId);
         if (loadingElement) loadingElement.remove();
 
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+
         const data = await response.json();
         
         console.log('Received response:', data);
