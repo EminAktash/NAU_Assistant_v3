@@ -6,7 +6,7 @@
       "use": "@vercel/python"
     },
     {
-      "src": "static/**",
+      "src": "static/**", 
       "use": "@vercel/static"
     }
   ],
@@ -28,5 +28,10 @@
       "src": "/(.*)",
       "dest": "/static/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "index.py": {
+      "maxDuration": 30
+    }
+  }
 }
