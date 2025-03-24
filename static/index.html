@@ -68,6 +68,10 @@
         .follow-up-message {
             background-color: #f0f7ff;
             border-left: 4px solid #0d6efd;
+            margin-top: 20px;
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 8px;
         }
 
         .message-content {
@@ -84,6 +88,7 @@
             font-size: 0.8rem;
             color: #666;
             margin-top: 10px;
+            margin-bottom: 20px; /* Add space after sources, before follow-up */
         }
 
         .source-link {
@@ -170,6 +175,17 @@
             .input-group .form-control,
             .input-group .btn {
                 height: 46px; /* Slightly larger for touch targets */
+            }
+            
+            /* Make the follow-up look better on mobile */
+            .follow-up-message {
+                margin: 20px 0;
+                padding: 12px;
+            }
+            
+            /* Ensure proper spacing after sources */
+            .sources {
+                margin-bottom: 25px;
             }
         }
     </style>
