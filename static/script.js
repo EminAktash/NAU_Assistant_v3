@@ -115,7 +115,7 @@ async function sendMessage() {
     const loadingHTML = `
         <div class="message assistant-message" id="${loadingId}">
             <div class="message-content">
-                <p><i class="bi bi-three-dots"></i> Thinking...</p>
+                <p><i class="bi bi-three-dots"></i> Thinking</p>
             </div>
         </div>
     `;
