@@ -110,7 +110,7 @@ async function sendMessage() {
     // Ensure scroll after user message
     scrollToBottom();
 
-    // Add loading message
+    // Add loading 
     const loadingId = 'loading-' + Date.now();
     const loadingHTML = `
         <div class="message assistant-message" id="${loadingId}">
