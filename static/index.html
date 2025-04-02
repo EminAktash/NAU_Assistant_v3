@@ -23,9 +23,51 @@
             width: 100%;
         }
 
+        /* Top navigation bar styles */
+        .top-nav-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 40px;
+            background-color: #003366;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 15px;
+            z-index: 1100;
+        }
+        
+        .top-nav-button {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: rgba(255, 255, 255, 0.2);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            text-decoration: none;
+        }
+        
+        .top-nav-button:hover,
+        .top-nav-button:focus {
+            background-color: rgba(255, 255, 255, 0.3);
+            color: white;
+        }
+        
+        .top-nav-button i {
+            font-size: 18px;
+        }
+
         #main {
             flex: 1;
-            height: 100%;
+            height: calc(100% - 40px);
+            margin-top: 40px;
             display: flex;
             flex-direction: column;
             background-color: #FAF9F6;
@@ -107,6 +149,7 @@
             font-size: 2.5rem;
             color: #003366;
             margin-bottom: 1rem;
+            margin-top: 10px;
         }
 
         .welcome-subtitle {
@@ -192,6 +235,16 @@
 </head>
 
 <body>
+    <!-- Top navigation bar -->
+    <div class="top-nav-container">
+        <a href="https://helpdesk.na.edu/" class="top-nav-button back-button" title="Back to NAU Helpdesk">
+            <i class="bi bi-arrow-left"></i>
+        </a>
+        <button class="top-nav-button home-button" title="Show welcome screen" onclick="showWelcomeScreen()">
+            <i class="bi bi-house"></i>
+        </button>
+    </div>
+
     <div id="main">
         <div id="chat-container">
             <!-- Welcome template -->
