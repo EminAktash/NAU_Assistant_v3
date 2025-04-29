@@ -4,6 +4,7 @@ const API_URL = isLocalhost ? 'http://localhost:5000/api' : 'https://nau-assista
 
 // State variables
 let currentFollowUpId = null; // Track the current follow-up question
+let userHasScrolled = false; // Track if user has manually scrolled up
 
 // DOM Elements
 const messagesContainer = document.getElementById('messages');
@@ -11,13 +12,35 @@ const welcomeContainer = document.getElementById('welcome-container');
 const welcomeTemplate = document.getElementById('welcome-template');
 const userInput = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
+const chatContainer = document.getElementById('chat-container');
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', function() {
     showWelcomeScreen();
     
-    // Note: We no longer need to create the nav button here
-    // as it's now included directly in the HTML
+    // Add scroll event listener to detect when user manually scrolls
+    chatContainer.addEventListener('scroll', () => {
+        const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
+        
+        if (isNearBottom) {
+            userHasScrolled = false;
+        } else {
+            userHasScrolled = true;
+        }
+    });
+});
+
+// Add window event listeners for better scroll handling
+window.addEventListener('resize', enhancedScrollToBottom);
+window.addEventListener('orientationchange', () => {
+    // Wait for orientation change to complete
+    setTimeout(enhancedScrollToBottom, 500);
+});
+
+// Handle keyboard appearing on mobile
+userInput.addEventListener('focus', () => {
+    // Wait for keyboard to appear
+    setTimeout(enhancedScrollToBottom, 600);
 });
 
 sendBtn.addEventListener('click', sendMessage);
@@ -26,6 +49,54 @@ userInput.addEventListener('keypress', (e) => {
         sendMessage();
     }
 });
+
+// Enhanced scrolling function for better reliability across devices
+function enhancedScrollToBottom() {
+    // Only auto-scroll if user hasn't manually scrolled up or if explicit force scroll
+    if (!userHasScrolled) {
+        // Get the height of the viewport
+        const viewportHeight = window.innerHeight;
+        
+        // Primary method: Scroll the messages container
+        if (messagesContainer) {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+        
+        // Method for mobile devices: Scroll the whole document
+        window.scrollTo({
+            top: document.body.scrollHeight,
+            behavior: 'smooth'
+        });
+        
+        // Backup method: Use requestAnimationFrame to ensure the DOM is fully updated
+        requestAnimationFrame(() => {
+            if (messagesContainer) {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+            
+            // Secondary scroll to handle issues on some mobile browsers
+            window.scrollTo({
+                top: document.body.scrollHeight,
+                behavior: 'smooth'
+            });
+        });
+        
+        // Force scroll after a short delay to handle slow rendering
+        setTimeout(() => {
+            if (messagesContainer) {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight + 1000; // Extra padding to ensure we go all the way down
+            }
+            
+            // Final attempt to scroll the window with extra padding
+            window.scrollTo(0, document.body.scrollHeight + 1000);
+            
+            // Make sure chat container is also scrolled
+            if (chatContainer) {
+                chatContainer.scrollTop = chatContainer.scrollHeight + 1000;
+            }
+        }, 300);
+    }
+}
 
 // Function to show welcome screen
 function showWelcomeScreen() {
@@ -43,8 +114,9 @@ function showWelcomeScreen() {
     messagesContainer.classList.add('d-none');
     messagesContainer.innerHTML = ''; // Clear any existing messages
     
-    // Reset current follow-up ID
+    // Reset current follow-up ID and scroll state
     currentFollowUpId = null;
+    userHasScrolled = false;
     
     // Optionally update URL without refreshing the page
     if (window.history && window.history.pushState) {
@@ -71,8 +143,11 @@ async function sendMessage() {
     };
     renderMessage(userMessage);
     
+    // Reset user scroll state when sending a new message
+    userHasScrolled = false;
+    
     // Ensure scroll after user message
-    scrollToBottom();
+    enhancedScrollToBottom();
 
     // Add loading indicator with more descriptive text for web search
     const loadingId = 'loading-' + Date.now();
@@ -86,7 +161,7 @@ async function sendMessage() {
     messagesContainer.insertAdjacentHTML('beforeend', loadingHTML);
     
     // Scroll to see the loading indicator
-    scrollToBottom();
+    enhancedScrollToBottom();
 
     try {
         // Prepare the request payload
@@ -98,6 +173,7 @@ async function sendMessage() {
         // If this is a response to a follow-up question, include that info
         if (currentFollowUpId) {
             payload.follow_up_to = currentFollowUpId;
+            payload.original_question = message;
             // Reset follow up ID after using it
             currentFollowUpId = null;
         }
@@ -127,6 +203,9 @@ async function sendMessage() {
             sources: data.sources
         };
         renderMessage(assistantMessage);
+        
+        // Ensure scroll after assistant message
+        enhancedScrollToBottom();
 
         // Check if there's a follow-up question
         if (data.follow_up) {
@@ -143,8 +222,13 @@ async function sendMessage() {
                 // Set the current follow-up ID
                 currentFollowUpId = data.follow_up_id;
                 
+                // Store the original question for context if needed
+                if (data.original_question) {
+                    followUpMessage.original_question = data.original_question;
+                }
+                
                 // Ensure scrolling after the follow-up appears
-                scrollToBottom();
+                enhancedScrollToBottom();
             }, 1000);
         }
     } catch (error) {
@@ -162,6 +246,9 @@ async function sendMessage() {
             </div>
         `;
         messagesContainer.insertAdjacentHTML('beforeend', errorHTML);
+        
+        // Scroll to error message
+        enhancedScrollToBottom();
     }
 }
 
@@ -229,26 +316,8 @@ function renderMessage(message) {
     messageDiv.appendChild(contentDiv);
     messagesContainer.appendChild(messageDiv);
 
-    // Scroll to bottom - enhanced for multiple approaches
-    scrollToBottom();
-}
-
-// Function to ensure scrolling to the bottom
-function scrollToBottom() {
-    // Method 1: Scroll the messages container
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    
-    // Method 2: Scroll the whole window to ensure mobile compatibility
-    window.scrollTo(0, document.body.scrollHeight);
-    
-    // Method 3: Use smooth scrolling for better UX
-    messagesContainer.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    
-    // Method 4: Delayed scroll to handle content rendering
-    setTimeout(() => {
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        window.scrollTo(0, document.body.scrollHeight);
-    }, 100);
+    // Scroll to bottom after rendering message
+    enhancedScrollToBottom();
 }
 
 // Function to ask a question from the FAQ buttons
@@ -257,4 +326,78 @@ function askQuestion(question) {
     userInput.value = question;
     // Send the message
     sendMessage();
+}
+
+// Fix for mobile viewport height issues
+function setAppHeight() {
+    const doc = document.documentElement;
+    doc.style.setProperty('--app-height', `${window.innerHeight}px`);
+}
+window.addEventListener('resize', setAppHeight);
+window.addEventListener('orientationchange', setAppHeight);
+setAppHeight();
+
+// Scroll indicator functionality
+const scrollIndicator = document.getElementById('scroll-indicator');
+
+// Show/hide scroll indicator based on scroll position
+chatContainer.addEventListener('scroll', () => {
+    const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
+    
+    if (isNearBottom) {
+        userHasScrolled = false;
+        scrollIndicator.classList.remove('visible');
+    } else {
+        userHasScrolled = true;
+        scrollIndicator.classList.add('visible');
+    }
+});
+
+// Click on scroll indicator to scroll to bottom
+scrollIndicator.addEventListener('click', () => {
+    userHasScrolled = false;
+    enhancedScrollToBottom();
+    scrollIndicator.classList.remove('visible');
+});
+
+// Modify enhancedScrollToBottom to update scroll indicator
+function updateScrollIndicator() {
+    const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
+    
+    if (isNearBottom) {
+        scrollIndicator.classList.remove('visible');
+    } else if (userHasScrolled) {
+        scrollIndicator.classList.add('visible');
+    }
+}
+
+// Call this after each scroll operation
+const originalEnhancedScrollToBottom = enhancedScrollToBottom;
+enhancedScrollToBottom = function() {
+    originalEnhancedScrollToBottom();
+    setTimeout(updateScrollIndicator, 400);
+};
+
+// Additional improvement: detect when keyboard appears on mobile
+let originalWindowHeight = window.innerHeight;
+window.addEventListener('resize', () => {
+    // If window height decreases significantly, keyboard probably appeared
+    if (window.innerHeight < originalWindowHeight * 0.8) {
+        setTimeout(enhancedScrollToBottom, 300);
+    } else {
+        originalWindowHeight = window.innerHeight;
+    }
+});
+
+// Fix for iOS devices where keyboard handling is different
+if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+    document.body.addEventListener('focusin', () => {
+        // Element received focus, keyboard might be shown
+        setTimeout(enhancedScrollToBottom, 500);
+    });
+    
+    document.body.addEventListener('focusout', () => {
+        // Element lost focus, keyboard might be hidden
+        setTimeout(enhancedScrollToBottom, 500);
+    });
 }

@@ -231,6 +231,30 @@
                 margin-bottom: 25px;
             }
         }
+        
+        /* Improved scroll indicator */
+        .scroll-indicator {
+            position: fixed;
+            bottom: 70px;
+            right: 20px;
+            background-color: rgba(13, 110, 253, 0.8);
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            z-index: 1200;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .scroll-indicator.visible {
+            opacity: 1;
+        }
     </style>
 </head>
 
@@ -298,26 +322,15 @@
                 </button>
             </div>
         </div>
+        
+        <!-- Scroll to bottom indicator -->
+        <div id="scroll-indicator" class="scroll-indicator">
+            <i class="bi bi-arrow-down"></i>
+        </div>
     </div>
 
+    <!-- Script below should be replaced with the complete JavaScript from previous artifact -->
     <script src="./static/script.js"></script>
-    <script>
-        // Fix for mobile viewport height issues
-        function setAppHeight() {
-            const doc = document.documentElement;
-            doc.style.setProperty('--app-height', `${window.innerHeight}px`);
-        }
-        window.addEventListener('resize', setAppHeight);
-        window.addEventListener('orientationchange', setAppHeight);
-        setAppHeight();
-        
-        // Ensure input is visible when keyboard appears
-        document.getElementById('user-input').addEventListener('focus', function() {
-            setTimeout(function() {
-                window.scrollTo(0, document.body.scrollHeight);
-            }, 300);
-        });
-    </script>
 </body>
 
 </html>
