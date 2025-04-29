@@ -74,12 +74,12 @@ async function sendMessage() {
     // Ensure scroll after user message
     scrollToBottom();
 
-    // Add loading 
+    // Add loading indicator with more descriptive text for web search
     const loadingId = 'loading-' + Date.now();
     const loadingHTML = `
         <div class="message assistant-message" id="${loadingId}">
             <div class="message-content">
-                <p><i class="bi bi-three-dots"></i> Thinking</p>
+                <p><i class="bi bi-search"></i> Thinking...</p>
             </div>
         </div>
     `;
@@ -178,8 +178,15 @@ function renderMessage(message) {
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
 
+    // Format the message content, properly handling citation brackets if any
+    let formattedContent = message.content;
+    
+    // Check for OpenAI-style citation syntax like [1], [2], etc. and make them superscript
+    // This makes citations stand out in the UI
+    formattedContent = formattedContent.replace(/\[(\d+)\]/g, '<sup class="citation-marker">[<a href="#citation-$1" class="citation-link">$1</a>]</sup>');
+    
     const paragraph = document.createElement('p');
-    paragraph.innerHTML = message.content.replace(/\n/g, '<br>');
+    paragraph.innerHTML = formattedContent.replace(/\n/g, '<br>');
     contentDiv.appendChild(paragraph);
 
     // Add follow-up ID as data attribute if it exists
@@ -197,13 +204,20 @@ function renderMessage(message) {
         sourcesDiv.appendChild(sourcesText);
 
         const sourcesList = document.createElement('ul');
-        message.sources.forEach(source => {
+        sourcesList.className = 'source-list';
+        
+        message.sources.forEach((source, index) => {
             const sourceItem = document.createElement('li');
+            sourceItem.id = `citation-${index + 1}`; // Used for citation links
+            
             const sourceLink = document.createElement('a');
             sourceLink.href = source;
             sourceLink.target = '_blank';
             sourceLink.className = 'source-link';
-            sourceLink.textContent = source;
+            
+            // Add source number for reference with citations
+            sourceLink.textContent = `[${index + 1}] ${source}`;
+            
             sourceItem.appendChild(sourceLink);
             sourcesList.appendChild(sourceItem);
         });

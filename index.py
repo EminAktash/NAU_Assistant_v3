@@ -4,8 +4,12 @@ import os
 import json
 import time
 import re
-import openai
+import asyncio
+import functools
 from dotenv import load_dotenv
+from openai import OpenAI
+# Async support for Flask
+from asgiref.sync import async_to_sync
 
 # Set up logging
 import logging
@@ -18,7 +22,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def make_async_compatible(app):
+    """
+    Wraps Flask routes with async support using asgiref.
+    This allows async functions to be used in Flask routes.
+    """
+    original_route = app.route
+    
+    def async_route(rule, **options):
+        def decorator(func):
+            if not asyncio.iscoroutinefunction(func):
+                return original_route(rule, **options)(func)
+                
+            @original_route(rule, **options)
+            @functools.wraps(func)
+            def sync_func(*args, **kwargs):
+                return async_to_sync(func)(*args, **kwargs)
+                
+            return sync_func
+            
+        return decorator
+        
+    app.route = async_route
+    
+    return app
+
 app = Flask(__name__)
+app = make_async_compatible(app)
 CORS(app)
 
 # Configure OpenAI client
@@ -28,12 +59,6 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError("Missing OPENAI_API_KEY environment variable. Please set it in your .env file.")
-    
-# Initialize the OpenAI client with the API key
-openai.api_key = OPENAI_API_KEY
-
-# Store chat history (in-memory for Vercel)
-chat_history = {}
 
 # Predefined answers for frequently asked questions (including exact match keys and follow-ups)
 predefined_answers = {
@@ -196,7 +221,7 @@ Continuing Education Programs:
 - Professional Development Courses
 - Certificate Programs
 The university is committed to providing a well-rounded education that prepares students for successful careers. The degree programs are designed to develop critical thinking, problem-solving, and leadership skills.
-Let me know""",
+Let me know if you'd like more information about any specific program!""",
         "sources": ["https://www.na.edu/academics/"],
         "follow_up": {
             "question": "Which program are you most interested in learning more about?",
@@ -351,6 +376,28 @@ def create_minimal_knowledge_base():
     ]
     return knowledge
 
+def clean_response_format(text):
+    """
+    Clean up response text to remove markdown formatting and special characters.
+    """
+    # Remove bold/italic formatting
+    cleaned_text = re.sub(r'\*\*|\*', '', text)
+    
+    # Replace markdown links [text](url) with just the text
+    cleaned_text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', cleaned_text)
+    
+    # Remove markdown headers
+    cleaned_text = re.sub(r'#{1,6}\s+', '', cleaned_text)
+    
+    # Replace emoji
+    cleaned_text = re.sub(r'🎓|👨‍🎓|👩‍🎓|📚|📝|🏫|🎉|🎊|🎯|✅|✓|☑|✔', '', cleaned_text)
+    
+    # Fix any excessive spaces created by the replacements
+    cleaned_text = re.sub(r' +', ' ', cleaned_text)
+    cleaned_text = re.sub(r'\n +', '\n', cleaned_text)
+    
+    return cleaned_text
+
 # Function to find a predefined answer for a query - now using exact matches
 def get_predefined_answer(query):
     # Clean and normalize the query
@@ -361,7 +408,13 @@ def get_predefined_answer(query):
         for pattern in patterns:
             # Check for exact match or if the query contains the pattern exactly as a phrase
             if clean_query == pattern or pattern in clean_query:
+                logger.info(f"Found predefined answer for '{pattern}'")
                 return predefined_answers[key]
+    
+    # Check for password reset related queries with special priority
+    if any(word in clean_query for word in ["password", "reset", "forgot", "change password", "cant login"]):
+        logger.info("Found password reset related query")
+        return predefined_answers["how to reset my password"]
     
     # No exact match found
     return None
@@ -373,19 +426,24 @@ def process_follow_up_response(follow_up, user_response):
     # Check if this is a yes/no question
     if "yes_response" in follow_up and "no_response" in follow_up:
         if any(word in user_response for word in ["yes", "yeah", "yep", "sure", "definitely", "absolutely"]):
+            logger.info("Responding with 'yes' response to follow-up")
             return follow_up["yes_response"]
         elif any(word in user_response for word in ["no", "nope", "not", "don't", "dont"]):
+            logger.info("Responding with 'no' response to follow-up")
             return follow_up["no_response"]
     
     # Check if this is an undergraduate/graduate question
     elif "undergraduate_response" in follow_up and "graduate_response" in follow_up:
         if any(word in user_response for word in ["undergraduate", "bachelor", "bachelors", "bs", "ba"]):
+            logger.info("Responding with undergraduate information")
             return follow_up["undergraduate_response"]
         elif any(word in user_response for word in ["graduate", "master", "masters", "mba", "ms", "phd"]):
+            logger.info("Responding with graduate information")
             return follow_up["graduate_response"]
     
     # For custom responses that require more specific handling
     elif "custom_response" in follow_up and follow_up["custom_response"]:
+        logger.info("Processing custom response for program information")
         # For the "Which program are you most interested in?" question
         programs = {
             "business": "The Bachelor of Business Administration (BBA) program at NAU offers concentrations in Accounting, Finance, International Business, and Management. Students learn key business principles and develop leadership skills. The BBA requires 120 credit hours including general education courses, business core courses, and concentration courses.",
@@ -396,13 +454,217 @@ def process_follow_up_response(follow_up, user_response):
         
         for prog_key, prog_desc in programs.items():
             if prog_key in user_response:
+                logger.info(f"Providing information about the {prog_key} program")
                 return prog_desc
         
         # If no specific program matched, give a general response
+        logger.info("No specific program matched, giving general response")
         return "Each program at NAU is designed to provide a strong educational foundation and practical skills. I'd be happy to provide more specific information about any program that interests you. Just let me know which one you'd like to learn more about."
     
     # Default general response if we can't determine what the user meant
+    logger.info("Using default follow-up response")
     return "I'm sorry, I'm not sure how to help with that specific request. Is there something else about North American University that I can assist you with?"
+
+# Function to use OpenAI's web search API
+async def search_web_with_openai(query):
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        # Use the appropriate web search model
+        logger.info("Using OpenAI web search...")
+        
+        # Location info for a U.S. based query - adjust if needed
+        user_location = {
+            "type": "approximate",
+            "approximate": {
+                "country": "US",
+                "city": "Stafford",
+                "region": "Texas"
+            }
+        }
+        
+        # Make request with proper web_search_options
+        response = client.chat.completions.create(
+            model="gpt-4o-search-preview",  # Must use a -search- model variant
+            web_search_options={
+                "search_context_size": "medium",  # Balance between quality and speed
+                "user_location": user_location    # Location to improve relevance
+            },
+            messages=[
+                {
+                    "role": "system", 
+                    "content": """You are the official AI chatbot for North American University (NAU). Your primary purpose is to provide students with accurate, helpful information about NAU programs, services, and policies.
+
+Use search results to provide detailed, accurate information about North American University. 
+Focus on the official NA.edu website content when available. If information isn't available from search, clearly state that and suggest contacting the appropriate department.
+
+STRICT FORMATTING REQUIREMENTS (MUST FOLLOW):
+1. NEVER use asterisks (*) for any purpose - not for emphasis, not for bullets
+2. NEVER use hash/pound signs (#) for any purpose
+3. NEVER include URLs in your main text
+4. Use ONLY plain text formatting
+5. For lists, use ONLY plain dashes (-) at the start of lines
+6. DO NOT use markdown formatting of any kind
+7. DO NOT use emojis or special characters
+8. IF you need to mention a website name, use plain text only
+
+DEPARTMENT CONTACT INFORMATION:
+- IT/Technical issues: support@na.edu or 832-230-5541 (never mention helpdesk@na.edu)
+- Facilities/Housing/Meal plans: housing@na.edu
+- Admissions: admissions@na.edu
+- Financial aid: finaid@na.edu
+- Academic advising: advising@na.edu
+- International student services: international@na.edu
+
+FORMAT:
+- Use a warm, conversational tone (e.g., "I'd be happy to help with that!")
+- Format numerical information with bullet points using hyphens (-)
+- Start responses with "I can help with that..." or similar friendly opener
+- End responses with an offer to help with other questions
+
+Use a warm, conversational tone and format information with bullet points where appropriate.
+End responses with an offer to help with other questions."""
+                },
+                {
+                    "role": "user",
+                    "content": f"Question about North American University: {query}"
+                }
+            ]
+        )
+        
+        # Extract the assistant's response
+        answer = response.choices[0].message.content
+        
+        # Extract citations if available
+        sources = []
+        if hasattr(response.choices[0].message, 'annotations'):
+            for annotation in response.choices[0].message.annotations:
+                if hasattr(annotation, 'type') and annotation.type == 'url_citation':
+                    if hasattr(annotation, 'url_citation') and hasattr(annotation.url_citation, 'url'):
+                        sources.append(annotation.url_citation.url)
+        
+        # Fallback to na.edu if no sources found
+        if not sources:
+            sources = ["https://www.na.edu"]
+        
+        logger.info(f"Successfully received web search response with {len(sources)} sources")
+        
+        return {
+            "answer": answer,
+            "sources": sources
+        }
+    
+    except Exception as e:
+        logger.error(f"Error with web search: {str(e)}")
+        # Fallback response in case of error
+        return {
+            "answer": f"I apologize, but I'm having trouble searching for information about that. Please try asking in a different way or contact NAU directly for assistance.",
+            "sources": ["https://www.na.edu"]
+        }
+
+# Fallback function when web search fails
+async def fallback_response(query):
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        # Use system prompt from the original code
+        system_prompt = """You are the official AI chatbot for North American University (NAU). Your primary purpose is to provide students with accurate, helpful information about NAU programs, services, and policies.
+
+RESPONSE PRIORITIES:
+1. PREDEFINED ANSWERS: For common questions about tuition, admissions, programs, password resets, course selection, and portal access, provide the complete predefined answer with all details.
+2. DEPARTMENT REDIRECTION: If the information isn't readily available, direct students to the appropriate department.
+
+STRICT FORMATTING REQUIREMENTS (MUST FOLLOW):
+1. NEVER use asterisks (*) for any purpose - not for emphasis, not for bullets
+2. NEVER use hash/pound signs (#) for any purpose
+3. NEVER include URLs in your main text
+4. Use ONLY plain text formatting
+5. For lists, use ONLY plain dashes (-) at the start of lines
+6. DO NOT use markdown formatting of any kind
+7. DO NOT use emojis or special characters
+8. IF you need to mention a website name, use plain text only
+
+DEPARTMENT CONTACT INFORMATION:
+- IT/Technical issues: support@na.edu or 832-230-5541 (never mention helpdesk@na.edu)
+- Facilities/Housing/Meal plans: housing@na.edu
+- Admissions: admissions@na.edu
+- Financial aid: finaid@na.edu
+- Academic advising: registrar@na.edu
+- International student services: international@na.edu
+
+RESPONSE STYLE:
+- Use a warm, conversational tone 
+- Format numerical information with simple dashes (-)
+- Start responses with "I can help with that..." or similar friendly opener
+- End responses with an offer to help with other questions
+
+CONTENT RESTRICTIONS:
+- Only provide information related to North American University
+- Never mention training data or your training process
+- For non-NAU questions, politely redirect: "I can only assist with topics related to North American University."
+- Only provide answers from www.na.edu website, not from the other websites."""
+        
+        context = json.dumps(create_minimal_knowledge_base())
+        
+        # Try to use web search with a different approach
+        try:
+            # Use web search with minimal options
+            response = client.chat.completions.create(
+                model="gpt-4o-search-preview",  # Using the search-capable model
+                web_search_options={},  # Minimal web search options
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Please find information about North American University regarding this question: {query}"}
+                ],
+                temperature=0
+            )
+            
+            answer = response.choices[0].message.content
+            logger.info("Successfully received response from backup web search")
+            
+            # Extract any available sources
+            sources = []
+            if hasattr(response.choices[0].message, 'annotations'):
+                for annotation in response.choices[0].message.annotations:
+                    if hasattr(annotation, 'type') and annotation.type == 'url_citation':
+                        if hasattr(annotation, 'url_citation') and hasattr(annotation.url_citation, 'url'):
+                            sources.append(annotation.url_citation.url)
+            
+            # Use default source if none found
+            if not sources:
+                sources = ["https://www.na.edu"]
+                
+            return {
+                "answer": answer,
+                "sources": sources
+            }
+            
+        except Exception as web_search_error:
+            logger.error(f"Backup web search failed: {str(web_search_error)}")
+            
+            # Final fallback to standard model with our knowledge base
+            response = client.chat.completions.create(
+                model="gpt-4o",  # Standard model as last resort
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Context about North American University: {context}\n\nUser Question: {query}"}
+                ],
+                temperature=0
+            )
+            
+            answer = response.choices[0].message.content
+            logger.info("Successfully received response from standard OpenAI API")
+            return {
+                "answer": answer,
+                "sources": ["https://www.na.edu"]
+            }
+            
+    except Exception as fallback_error:
+        logger.error(f"Fallback API error: {str(fallback_error)}")
+        return {
+            "answer": "I apologize, but I'm having trouble processing your request at the moment. Please try again later or contact NAU directly for assistance.",
+            "sources": ["https://www.na.edu"]
+        }
 
 @app.route('/')
 def index():
@@ -413,196 +675,98 @@ def static_files(path):
     return send_from_directory('static', path)
 
 @app.route('/api/chat', methods=['POST'])
-def chat():
+async def chat():
     try:
         data = request.json
-        chat_id = data.get('chat_id', 'default')
         query = data.get('query', '')
         follow_up_to = data.get('follow_up_to', None)
+        original_question = data.get('original_question', '')
         
-        logger.info(f"Received chat request - chat_id: {chat_id}, query: {query}, follow_up_to: {follow_up_to}")
+        logger.info(f"Received chat request - query: {query}, follow_up_to: {follow_up_to}")
         
         if not query:
             return jsonify({"error": "Query is required"}), 400
-        
-        # Initialize chat history if it doesn't exist
-        if chat_id not in chat_history:
-            chat_history[chat_id] = []
-        
-        # Add user message to history
-        chat_history[chat_id].append({
-            "role": "user",
-            "content": query,
-            "timestamp": time.time()
-        })
-        
-        # Check if this is a response to a follow-up question
-        if follow_up_to:
-            # Get the original question that prompted the follow-up
-            original_question = None
-            for i, msg in enumerate(chat_history[chat_id]):
-                if msg.get("follow_up_id") == follow_up_to:
-                    # Find the original question that came before this follow-up
-                    for j in range(i-1, -1, -1):
-                        if chat_history[chat_id][j]["role"] == "assistant" and "follow_up" not in chat_history[chat_id][j]:
-                            original_question = chat_history[chat_id][j].get("original_question")
-                            break
-                    break
             
-            if original_question:
-                # Get the predefined answer for the original question
-                predefined = get_predefined_answer(original_question)
-                if predefined and "follow_up" in predefined:
-                    # Process the user's response to the follow-up
-                    answer = process_follow_up_response(predefined["follow_up"], query)
-                    sources = predefined.get("sources", ["https://www.na.edu"])
-                    
-                    # Add the response to chat history
-                    chat_history[chat_id].append({
-                        "role": "assistant",
-                        "content": answer,
-                        "sources": sources,
-                        "timestamp": time.time(),
-                        "is_follow_up_response": True,
-                        "original_question": original_question
-                    })
-                    
-                    return jsonify({
-                        "answer": answer,
-                        "sources": sources,
-                        "chat_id": chat_id
-                    })
+        # If this is a follow-up response
+        if follow_up_to and original_question:
+            logger.info(f"Processing follow-up response to: {follow_up_to}")
+            
+            predefined = get_predefined_answer(original_question)
+            if predefined and "follow_up" in predefined:
+                answer = process_follow_up_response(predefined["follow_up"], query)
+                sources = predefined.get("sources", ["https://www.na.edu"])
+
+                # Clean answer
+                answer = clean_response_format(answer)
+
+                return jsonify({
+                    "answer": answer,
+                    "sources": sources
+                })
         
-        # If not a follow-up response, check for predefined answers first
+        # Check for predefined answers first
         predefined = get_predefined_answer(query)
         if predefined:
             answer = predefined["answer"]
             sources = predefined["sources"]
+
+            # Clean answer
+            answer = clean_response_format(answer)
+
             logger.info("Using predefined answer")
-            
-            # Check if this answer has a follow-up question
-            follow_up = None
-            follow_up_id = None
+            response_data = {
+                "answer": answer,
+                "sources": sources
+            }
+
             if "follow_up" in predefined:
                 follow_up = predefined["follow_up"]["question"]
                 follow_up_id = f"followup_{int(time.time())}"
-            
-            # Add assistant message to history
-            chat_history[chat_id].append({
-                "role": "assistant",
-                "content": answer,
-                "sources": sources,
-                "timestamp": time.time(),
-                "original_question": query
-            })
-            
-            # If there's a follow-up, add it to history as a separate message
-            if follow_up:
-                chat_history[chat_id].append({
-                    "role": "assistant",
-                    "content": follow_up,
-                    "follow_up": True,
-                    "follow_up_id": follow_up_id,
-                    "timestamp": time.time() + 1,  # +1 to ensure it appears after the main answer
-                    "original_question": query
-                })
-            
-            # Prepare the response
-            response_data = {
-                "answer": answer,
-                "sources": sources,
-                "chat_id": chat_id
-            }
-            
-            # Add follow-up if applicable
-            if follow_up and follow_up_id:
                 response_data["follow_up"] = follow_up
                 response_data["follow_up_id"] = follow_up_id
-            
-            logger.info("Sending predefined response to client")
+                response_data["original_question"] = query
+
             return jsonify(response_data)
-            
+        
         else:
-            # No predefined answer, use OpenAI API
-            system_prompt = """You are the official AI chatbot for North American University (NAU). Your primary purpose is to provide students with accurate, helpful information about NAU programs, services, and policies.
-
-RESPONSE PRIORITIES (in order):
-1. PREDEFINED ANSWERS: For common questions about tuition, admissions, programs, password resets, course selection, and portal access, provide the complete predefined answer with all details.
-2. WEB SEARCH: If no predefined answer exists, search https://www.na.edu/ for the information.
-3. DEPARTMENT REDIRECTION: Only if the information cannot be found after searching, direct students to the appropriate department.
-
-PASSWORD RESET INSTRUCTIONS:
-When asked any variation of "how to reset password" or "forgot password", ALWAYS provide these exact steps:
-1. Go to the password reset page at https://passwordreset.microsoftonline.com/
-2. Enter your NAU username (usually the first initial of your first name followed by your last name, e.g. jsmith@na.edu)
-3. Enter the characters shown in the image to verify you are not a robot
-4. Select "Email" as the contact method for verification
-5. Check your email for a verification code and enter it on the next page
-6. Create a new password, confirm it, and click "Finish"
-7. Once your password has been successfully reset, you can sign in to your NAU account with the new password
-
-DEPARTMENT CONTACT INFORMATION:
-- IT/Technical issues: support@na.edu or 832-230-5541 (never mention helpdesk@na.edu)
-- Facilities/Housing/Meal plans: housing@na.edu
-- Admissions: admissions@na.edu
-- Financial aid: finaid@na.edu
-- Academic advising: advising@na.edu
-- International student services: international@na.edu
-
-RESPONSE STYLE:
-- Use a warm, conversational tone (e.g., "I'd be happy to help with that!")
-- Format numerical information with bullet points using hyphens (-)
-- Start responses with "Here's how to..." or "I can help with that..."
-- End responses with an offer to help with other questions
-- Support multiple languages including English, Turkish, Hindi, Urdu, Russian, and Arabic
-
-CONTENT RESTRICTIONS:
-- Only provide information related to North American University
-- Never mention training data or your training process
-- For non-NAU questions, politely redirect: "I can only assist with topics related to North American University."
-
-Always provide thorough, accurate information and check that your response directly answers the user's question."""
-            
-            context = json.dumps(create_minimal_knowledge_base())
+            # No predefined answer, use OpenAI web search
+            logger.info("No predefined answer found, using web search...")
             
             try:
-                logger.info("Calling OpenAI API...")
-                
-                # Use OpenAI API instead of Anthropic
-                response = openai.ChatCompletion.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Context about North American University: {context}\n\nUser Question: {query}"}
-                    ],
-                    max_tokens=1000,
-                    temperature=0
-                )
-                
-                answer = response.choices[0].message["content"]
-                logger.info("Successfully received response from OpenAI API")
+                search_result = await search_web_with_openai(query)
+                answer = search_result["answer"]
+                sources = search_result["sources"]
+
+                # Clean answer
+                answer = clean_response_format(answer)
+
+                return jsonify({
+                    "answer": answer,
+                    "sources": sources
+                })
             except Exception as api_error:
-                logger.error(f"API error: {str(api_error)}")
-                answer = "I apologize, but I'm having trouble processing your request at the moment. Please try again later or contact NAU directly for assistance."
-            
-            sources = ["https://www.na.edu"]
-            
-            # Add assistant message to history
-            chat_history[chat_id].append({
-                "role": "assistant",
-                "content": answer,
-                "sources": sources,
-                "timestamp": time.time(),
-                "original_question": query
-            })
-            
-            logger.info("Sending response to client")
-            
-            return jsonify({
-                "answer": answer,
-                "sources": sources,
-                "chat_id": chat_id
-            })
+                logger.error(f"Web search API error: {str(api_error)}")
+
+                try:
+                    fallback_result = await fallback_response(query)
+                    answer = fallback_result["answer"]
+                    sources = fallback_result["sources"]
+
+                    # Clean answer
+                    answer = clean_response_format(answer)
+
+                    return jsonify({
+                        "answer": answer,
+                        "sources": sources
+                    })
+                except Exception as fallback_error:
+                    logger.error(f"Fallback API error: {str(fallback_error)}")
+                    error_answer = "I apologize, but I'm having trouble processing your request at the moment. Please try again later or contact NAU directly for assistance."
+                    
+                    return jsonify({
+                        "answer": error_answer,
+                        "sources": ["https://www.na.edu"]
+                    })
     
     except Exception as e:
         import traceback
@@ -610,44 +774,15 @@ Always provide thorough, accurate information and check that your response direc
         logger.error(traceback.format_exc())
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
-@app.route('/api/chats', methods=['GET'])
-def get_chats():
-    chats = []
-    for chat_id, messages in chat_history.items():
-        if messages:
-            user_messages = [msg for msg in messages if msg.get("role") == "user"]
-            if user_messages:
-                first_message = user_messages[0]["content"]
-                preview = first_message[:50] + "..." if len(first_message) > 50 else first_message
-                last_timestamp = messages[-1]["timestamp"]
-                chats.append({
-                    "id": chat_id,
-                    "preview": preview,
-                    "timestamp": last_timestamp
-                })
-    
-    # Sort by timestamp (newest first)
-    chats.sort(key=lambda x: x["timestamp"], reverse=True)
-    return jsonify(chats)
-
-@app.route('/api/chats/<chat_id>', methods=['GET'])
-def get_chat(chat_id):
-    if chat_id in chat_history:
-        return jsonify(chat_history[chat_id])
-    return jsonify([])
-
-@app.route('/api/chats/<chat_id>', methods=['DELETE'])
-def delete_chat(chat_id):
-    if chat_id in chat_history:
-        del chat_history[chat_id]
-    return jsonify({"success": True})
-
-@app.route('/api/chats', methods=['POST'])
-def create_chat():
-    chat_id = f"chat_{int(time.time())}"
-    chat_history[chat_id] = []
-    return jsonify({"chat_id": chat_id})
 
 if __name__ == '__main__':
-    logger.info("Starting North American University AI Assistant")
-    app.run(debug=True, port=5000)
+    logger.info("Starting North American University AI Assistant with Web Search (No Chat Storage)")
+    # Use Hypercorn ASGI server which supports async
+    import hypercorn.asyncio
+    import hypercorn.config
+    
+    config = hypercorn.config.Config()
+    config.bind = ["127.0.0.1:5000"]
+    config.use_reloader = True
+    
+    asyncio.run(hypercorn.asyncio.serve(app, config))
