@@ -6,6 +6,7 @@ import time
 import re
 import asyncio
 import functools
+import urllib.parse
 from dotenv import load_dotenv
 from openai import OpenAI
 # Async support for Flask
@@ -378,7 +379,7 @@ def create_minimal_knowledge_base():
 
 def clean_response_format(text):
     """
-    Clean up response text to remove markdown formatting and special characters.
+    Clean up response text to remove markdown formatting, special characters, and unwanted website mentions.
     """
     # Remove bold/italic formatting
     cleaned_text = re.sub(r'\*\*|\*', '', text)
@@ -389,12 +390,16 @@ def clean_response_format(text):
     # Remove markdown headers
     cleaned_text = re.sub(r'#{1,6}\s+', '', cleaned_text)
     
-    # Replace emoji
+    # Replace emoji characters
     cleaned_text = re.sub(r'🎓|👨‍🎓|👩‍🎓|📚|📝|🏫|🎉|🎊|🎯|✅|✓|☑|✔', '', cleaned_text)
+
+    # Remove unwanted mentions of (na.edu) or (www.na.edu)
+    cleaned_text = re.sub(r'\( ?(www\.)?na\.edu ?\)', '', cleaned_text, flags=re.IGNORECASE)
     
-    # Fix any excessive spaces created by the replacements
+    # Remove any leftover extra spaces caused by removals
     cleaned_text = re.sub(r' +', ' ', cleaned_text)
     cleaned_text = re.sub(r'\n +', '\n', cleaned_text)
+    cleaned_text = cleaned_text.strip()
     
     return cleaned_text
 
@@ -540,25 +545,42 @@ End responses with an offer to help with other questions."""
         if hasattr(response.choices[0].message, 'annotations'):
             for annotation in response.choices[0].message.annotations:
                 if hasattr(annotation, 'type') and annotation.type == 'url_citation':
-                    if hasattr(annotation, 'url_citation') and hasattr(annotation.url_citation, 'url'):
-                        sources.append(annotation.url_citation.url)
-        
-        # Fallback to na.edu if no sources found
+                    if hasattr(annotation.url_citation, 'url'):
+                        url = annotation.url_citation.url
+                        
+                        # Clean the URL if it is an OpenAI redirect
+                        if "openai.com/citation" in url and "url=" in url:
+                            parsed_url = urllib.parse.urlparse(url)
+                            query_params = urllib.parse.parse_qs(parsed_url.query)
+                            real_urls = query_params.get('url')
+                            if real_urls:
+                                decoded_url = urllib.parse.unquote(real_urls[0])
+                            else:
+                                decoded_url = url
+                        else:
+                            decoded_url = url
+
+                        # FINAL cleanup: remove "?utm_source=openai" or "&utm_source=openai"
+                        decoded_url = re.sub(r'(\?|&)utm_source=openai(&)?', '', decoded_url)
+                        # Also remove any leftover trailing ? or &
+                        decoded_url = decoded_url.rstrip('?').rstrip('&')
+                        
+                        sources.append(decoded_url)
+
         if not sources:
             sources = ["https://www.na.edu"]
-        
+
         logger.info(f"Successfully received web search response with {len(sources)} sources")
-        
+
         return {
             "answer": answer,
             "sources": sources
         }
-    
+
     except Exception as e:
         logger.error(f"Error with web search: {str(e)}")
-        # Fallback response in case of error
         return {
-            "answer": f"I apologize, but I'm having trouble searching for information about that. Please try asking in a different way or contact NAU directly for assistance.",
+            "answer": "I apologize, but I'm having trouble searching for information about that. Please try again later or contact NAU directly for assistance.",
             "sources": ["https://www.na.edu"]
         }
 
