@@ -15,13 +15,13 @@ const sendBtn = document.getElementById('send-btn');
 const chatContainer = document.getElementById('chat-container');
 
 // Event Listeners
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     showWelcomeScreen();
-    
+
     // Add scroll event listener to detect when user manually scrolls
     chatContainer.addEventListener('scroll', () => {
         const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
-        
+
         if (isNearBottom) {
             userHasScrolled = false;
         } else {
@@ -56,40 +56,42 @@ function enhancedScrollToBottom() {
     if (!userHasScrolled) {
         // Get the height of the viewport
         const viewportHeight = window.innerHeight;
-        
+
+
         // Primary method: Scroll the messages container
         if (messagesContainer) {
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
-        
+
         // Method for mobile devices: Scroll the whole document
         window.scrollTo({
             top: document.body.scrollHeight,
             behavior: 'smooth'
         });
-        
+
         // Backup method: Use requestAnimationFrame to ensure the DOM is fully updated
         requestAnimationFrame(() => {
             if (messagesContainer) {
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             }
-            
+
             // Secondary scroll to handle issues on some mobile browsers
             window.scrollTo({
                 top: document.body.scrollHeight,
                 behavior: 'smooth'
             });
         });
-        
+
         // Force scroll after a short delay to handle slow rendering
         setTimeout(() => {
             if (messagesContainer) {
                 messagesContainer.scrollTop = messagesContainer.scrollHeight + 1000; // Extra padding to ensure we go all the way down
             }
-            
+
+
             // Final attempt to scroll the window with extra padding
             window.scrollTo(0, document.body.scrollHeight + 1000);
-            
+
             // Make sure chat container is also scrolled
             if (chatContainer) {
                 chatContainer.scrollTop = chatContainer.scrollHeight + 1000;
@@ -113,11 +115,12 @@ function showWelcomeScreen() {
     welcomeContainer.style.display = 'block';
     messagesContainer.classList.add('d-none');
     messagesContainer.innerHTML = ''; // Clear any existing messages
-    
+
+
     // Reset current follow-up ID and scroll state
     currentFollowUpId = null;
     userHasScrolled = false;
-    
+
     // Optionally update URL without refreshing the page
     if (window.history && window.history.pushState) {
         window.history.pushState({}, document.title, window.location.pathname);
@@ -142,10 +145,11 @@ async function sendMessage() {
         content: message
     };
     renderMessage(userMessage);
-    
+
+
     // Reset user scroll state when sending a new message
     userHasScrolled = false;
-    
+
     // Ensure scroll after user message
     enhancedScrollToBottom();
 
@@ -159,7 +163,7 @@ async function sendMessage() {
         </div>
     `;
     messagesContainer.insertAdjacentHTML('beforeend', loadingHTML);
-    
+
     // Scroll to see the loading indicator
     enhancedScrollToBottom();
 
@@ -179,7 +183,7 @@ async function sendMessage() {
         }
 
         console.log(`Sending request to: ${API_URL}/chat`);
-        
+
         // Send message to API
         const response = await fetch(`${API_URL}/chat`, {
             method: 'POST',
@@ -203,7 +207,7 @@ async function sendMessage() {
             sources: data.sources
         };
         renderMessage(assistantMessage);
-        
+
         // Ensure scroll after assistant message
         enhancedScrollToBottom();
 
@@ -221,12 +225,12 @@ async function sendMessage() {
 
                 // Set the current follow-up ID
                 currentFollowUpId = data.follow_up_id;
-                
+
                 // Store the original question for context if needed
                 if (data.original_question) {
                     followUpMessage.original_question = data.original_question;
                 }
-                
+
                 // Ensure scrolling after the follow-up appears
                 enhancedScrollToBottom();
             }, 1000);
@@ -246,7 +250,7 @@ async function sendMessage() {
             </div>
         `;
         messagesContainer.insertAdjacentHTML('beforeend', errorHTML);
-        
+
         // Scroll to error message
         enhancedScrollToBottom();
     }
@@ -267,11 +271,12 @@ function renderMessage(message) {
 
     // Format the message content, properly handling citation brackets if any
     let formattedContent = message.content;
-    
+
+
     // Check for OpenAI-style citation syntax like [1], [2], etc. and make them superscript
     // This makes citations stand out in the UI
     formattedContent = formattedContent.replace(/\[(\d+)\]/g, '<sup class="citation-marker">[<a href="#citation-$1" class="citation-link">$1</a>]</sup>');
-    
+
     const paragraph = document.createElement('p');
     paragraph.innerHTML = formattedContent.replace(/\n/g, '<br>');
     contentDiv.appendChild(paragraph);
@@ -292,19 +297,24 @@ function renderMessage(message) {
 
         const sourcesList = document.createElement('ul');
         sourcesList.className = 'source-list';
-        
+
+
+        const seenSources = new Set();
+
         message.sources.forEach((source, index) => {
+            if (seenSources.has(source)) return;
+            seenSources.add(source);
+
             const sourceItem = document.createElement('li');
-            sourceItem.id = `citation-${index + 1}`; // Used for citation links
-            
+            sourceItem.id = `citation-${index + 1}`;
+
             const sourceLink = document.createElement('a');
             sourceLink.href = source;
             sourceLink.target = '_blank';
             sourceLink.className = 'source-link';
-            
-            // Add source number for reference with citations
+
             sourceLink.textContent = `[${index + 1}] ${source}`;
-            
+
             sourceItem.appendChild(sourceLink);
             sourcesList.appendChild(sourceItem);
         });
@@ -343,7 +353,7 @@ const scrollIndicator = document.getElementById('scroll-indicator');
 // Show/hide scroll indicator based on scroll position
 chatContainer.addEventListener('scroll', () => {
     const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
-    
+
     if (isNearBottom) {
         userHasScrolled = false;
         scrollIndicator.classList.remove('visible');
@@ -363,7 +373,7 @@ scrollIndicator.addEventListener('click', () => {
 // Modify enhancedScrollToBottom to update scroll indicator
 function updateScrollIndicator() {
     const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
-    
+
     if (isNearBottom) {
         scrollIndicator.classList.remove('visible');
     } else if (userHasScrolled) {
@@ -373,7 +383,8 @@ function updateScrollIndicator() {
 
 // Call this after each scroll operation
 const originalEnhancedScrollToBottom = enhancedScrollToBottom;
-enhancedScrollToBottom = function() {
+
+enhancedScrollToBottom = function () {
     originalEnhancedScrollToBottom();
     setTimeout(updateScrollIndicator, 400);
 };
@@ -395,7 +406,7 @@ if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
         // Element received focus, keyboard might be shown
         setTimeout(enhancedScrollToBottom, 500);
     });
-    
+
     document.body.addEventListener('focusout', () => {
         // Element lost focus, keyboard might be hidden
         setTimeout(enhancedScrollToBottom, 500);
