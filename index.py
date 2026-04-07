@@ -8,7 +8,7 @@ import asyncio
 import functools
 import urllib.parse
 from dotenv import load_dotenv
-from openai import OpenAI
+import anthropic
 # Async support for Flask
 from asgiref.sync import async_to_sync
 
@@ -53,13 +53,13 @@ app = Flask(__name__)
 app = make_async_compatible(app)
 CORS(app)
 
-# Configure OpenAI client
+# Configure Anthropic client
 load_dotenv()
 
 # Get API key from environment variables
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise ValueError("Missing OPENAI_API_KEY environment variable. Please set it in your .env file.")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    raise ValueError("Missing ANTHROPIC_API_KEY environment variable. Please set it in your .env file.")
 
 # Predefined answers for frequently asked questions (including exact match keys and follow-ups)
 predefined_answers = {
@@ -470,107 +470,99 @@ def process_follow_up_response(follow_up, user_response):
     logger.info("Using default follow-up response")
     return "I'm sorry, I'm not sure how to help with that specific request. Is there something else about North American University that I can assist you with?"
 
-# Function to use OpenAI's web search API
-async def search_web_with_openai(query):
+
+# Function to use Claude's web search API
+async def search_web_with_claude(query):
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        
-        # Use the appropriate web search model
-        logger.info("Using OpenAI web search...")
-        
-        # Location info for a U.S. based query - adjust if needed
-        user_location = {
-            "type": "approximate",
-            "approximate": {
-                "country": "US",
-                "city": "Stafford",
-                "region": "Texas"
-            }
-        }
-        
-        # Make request with proper web_search_options
-        response = client.chat.completions.create(
-            model="gpt-4o-search-preview",  # Must use a -search- model variant
-            web_search_options={
-                "search_context_size": "medium",  # Balance between quality and speed
-                "user_location": user_location    # Location to improve relevance
-            },
-            messages=[
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+        logger.info("Using Claude web search...")
+
+        system_prompt = """You are the official AI chatbot for North American University (NAU). Your primary purpose is to provide students with accurate, helpful information about NAU programs, services, and policies.
+
+            Use search results to provide detailed, accurate information about North American University. 
+            Focus on the official NA.edu website content when available. If information isn't available from search, clearly state that and suggest contacting the appropriate department.
+
+            STRICT FORMATTING REQUIREMENTS (MUST FOLLOW):
+            1. NEVER use asterisks (*) for any purpose - not for emphasis, not for bullets
+            2. NEVER use hash/pound signs (#) for any purpose
+            3. NEVER include URLs in your main text
+            4. Use ONLY plain text formatting
+            5. For lists, use ONLY plain dashes (-) at the start of lines
+            6. DO NOT use markdown formatting of any kind
+            7. DO NOT use emojis or special characters
+            8. IF you need to mention a website name, use plain text only
+
+            DEPARTMENT CONTACT INFORMATION:
+            - IT/Technical issues: support@na.edu or 832-230-5541 (never mention helpdesk@na.edu)
+            - Facilities/Housing/Meal plans: housing@na.edu
+            - Admissions: admissions@na.edu
+            - Financial aid: finaid@na.edu
+            - Academic advising: advising@na.edu
+            - International student services: international@na.edu
+
+            FORMAT:
+            - Use a warm, conversational tone (e.g., "I'd be happy to help with that!")
+            - Format numerical information with bullet points using hyphens (-)
+            - Start responses with "I can help with that..." or similar friendly opener
+            - End responses with an offer to help with other questions
+
+            Use a warm, conversational tone and format information with bullet points where appropriate.
+            End responses with an offer to help with other questions."""
+
+        response = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=1024,
+            system=system_prompt,
+            tools=[
                 {
-                    "role": "system", 
-                    "content": """You are the official AI chatbot for North American University (NAU). Your primary purpose is to provide students with accurate, helpful information about NAU programs, services, and policies.
-
-Use search results to provide detailed, accurate information about North American University. 
-Focus on the official NA.edu website content when available. If information isn't available from search, clearly state that and suggest contacting the appropriate department.
-
-STRICT FORMATTING REQUIREMENTS (MUST FOLLOW):
-1. NEVER use asterisks (*) for any purpose - not for emphasis, not for bullets
-2. NEVER use hash/pound signs (#) for any purpose
-3. NEVER include URLs in your main text
-4. Use ONLY plain text formatting
-5. For lists, use ONLY plain dashes (-) at the start of lines
-6. DO NOT use markdown formatting of any kind
-7. DO NOT use emojis or special characters
-8. IF you need to mention a website name, use plain text only
-
-DEPARTMENT CONTACT INFORMATION:
-- IT/Technical issues: support@na.edu or 832-230-5541 (never mention helpdesk@na.edu)
-- Facilities/Housing/Meal plans: housing@na.edu
-- Admissions: admissions@na.edu
-- Financial aid: finaid@na.edu
-- Academic advising: advising@na.edu
-- International student services: international@na.edu
-
-FORMAT:
-- Use a warm, conversational tone (e.g., "I'd be happy to help with that!")
-- Format numerical information with bullet points using hyphens (-)
-- Start responses with "I can help with that..." or similar friendly opener
-- End responses with an offer to help with other questions
-
-Use a warm, conversational tone and format information with bullet points where appropriate.
-End responses with an offer to help with other questions."""
-                },
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 5
+                }
+            ],
+            messages=[
                 {
                     "role": "user",
                     "content": f"Question about North American University: {query}"
                 }
             ]
         )
-        
-        # Extract the assistant's response
-        answer = response.choices[0].message.content
-        
-        # Extract citations if available
-        sources = []
-        if hasattr(response.choices[0].message, 'annotations'):
-            for annotation in response.choices[0].message.annotations:
-                if hasattr(annotation, 'type') and annotation.type == 'url_citation':
-                    if hasattr(annotation.url_citation, 'url'):
-                        url = annotation.url_citation.url
-                        
-                        # Clean the URL if it is an OpenAI redirect
-                        if "openai.com/citation" in url and "url=" in url:
-                            parsed_url = urllib.parse.urlparse(url)
-                            query_params = urllib.parse.parse_qs(parsed_url.query)
-                            real_urls = query_params.get('url')
-                            if real_urls:
-                                decoded_url = urllib.parse.unquote(real_urls[0])
-                            else:
-                                decoded_url = url
-                        else:
-                            decoded_url = url
 
-                        # FINAL cleanup: remove "?utm_source=openai" or "&utm_source=openai"
-                        decoded_url = re.sub(r'(\?|&)utm_source=openai(&)?', '', decoded_url)
-                        # Also remove any leftover trailing ? or &
-                        decoded_url = decoded_url.rstrip('?').rstrip('&')
-                        
-                        sources.append(decoded_url)
+        # Extract the text answer from content blocks
+        answer = ""
+        sources = []
+
+        for block in response.content:
+            if block.type == "text":
+                answer += block.text
+            elif block.type == "tool_result":
+                # web_search results are handled internally by Claude
+                pass
+
+        # Extract cited URLs from the response annotations if present
+        # Claude web search returns sources via tool_use result blocks
+        for block in response.content:
+            if hasattr(block, "type") and block.type == "tool_use" and block.name == "web_search":
+                pass  # Claude handles search internally
+
+        # Parse sources from response metadata if available
+        # Claude's web search cites sources inline; extract any URLs from tool results
+        for block in response.content:
+            if hasattr(block, "content") and isinstance(block.content, list):
+                for item in block.content:
+                    if hasattr(item, "type") and item.type == "text":
+                        # Extract URLs using regex as a fallback
+                        found_urls = re.findall(r'https?://[^\s\)\]\"]+', item.text)
+                        sources.extend(found_urls)
+
+        # Deduplicate sources
+        sources = list(dict.fromkeys(sources))
 
         if not sources:
             sources = ["https://www.na.edu"]
 
-        logger.info(f"Successfully received web search response with {len(sources)} sources")
+        logger.info(f"Successfully received Claude web search response with {len(sources)} sources")
 
         return {
             "answer": answer,
@@ -578,7 +570,7 @@ End responses with an offer to help with other questions."""
         }
 
     except Exception as e:
-        logger.error(f"Error with web search: {str(e)}")
+        logger.error(f"Error with Claude web search: {str(e)}")
         return {
             "answer": "I apologize, but I'm having trouble searching for information about that. Please try again later or contact NAU directly for assistance.",
             "sources": ["https://www.na.edu"]
@@ -587,100 +579,119 @@ End responses with an offer to help with other questions."""
 # Fallback function when web search fails
 async def fallback_response(query):
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        
-        # Use system prompt from the original code
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
         system_prompt = """You are the official AI chatbot for North American University (NAU). Your primary purpose is to provide students with accurate, helpful information about NAU programs, services, and policies.
 
-RESPONSE PRIORITIES:
-1. PREDEFINED ANSWERS: For common questions about tuition, admissions, programs, password resets, course selection, and portal access, provide the complete predefined answer with all details.
-2. DEPARTMENT REDIRECTION: If the information isn't readily available, direct students to the appropriate department.
+                            RESPONSE PRIORITIES:
+                            1. PREDEFINED ANSWERS: For common questions about tuition, admissions, programs, password resets, course selection, and portal access, provide the complete predefined answer with all details.
+                            2. DEPARTMENT REDIRECTION: If the information isn't readily available, direct students to the appropriate department.
 
-STRICT FORMATTING REQUIREMENTS (MUST FOLLOW):
-1. NEVER use asterisks (*) for any purpose - not for emphasis, not for bullets
-2. NEVER use hash/pound signs (#) for any purpose
-3. NEVER include URLs in your main text
-4. Use ONLY plain text formatting
-5. For lists, use ONLY plain dashes (-) at the start of lines
-6. DO NOT use markdown formatting of any kind
-7. DO NOT use emojis or special characters
-8. IF you need to mention a website name, use plain text only
+                            STRICT FORMATTING REQUIREMENTS (MUST FOLLOW):
+                            1. NEVER use asterisks (*) for any purpose - not for emphasis, not for bullets
+                            2. NEVER use hash/pound signs (#) for any purpose
+                            3. NEVER include URLs in your main text
+                            4. Use ONLY plain text formatting
+                            5. For lists, use ONLY plain dashes (-) at the start of lines
+                            6. DO NOT use markdown formatting of any kind
+                            7. DO NOT use emojis or special characters
+                            8. IF you need to mention a website name, use plain text only
 
-DEPARTMENT CONTACT INFORMATION:
-- IT/Technical issues: support@na.edu or 832-230-5541 (never mention helpdesk@na.edu)
-- Facilities/Housing/Meal plans: housing@na.edu
-- Admissions: admissions@na.edu
-- Financial aid: finaid@na.edu
-- Academic advising: registrar@na.edu
-- International student services: international@na.edu
+                            DEPARTMENT CONTACT INFORMATION:
+                            - IT/Technical issues: support@na.edu or 832-230-5541 (never mention helpdesk@na.edu)
+                            - Facilities/Housing/Meal plans: housing@na.edu
+                            - Admissions: admissions@na.edu
+                            - Financial aid: finaid@na.edu
+                            - Academic advising: registrar@na.edu
+                            - International student services: international@na.edu
 
-RESPONSE STYLE:
-- Use a warm, conversational tone 
-- Format numerical information with simple dashes (-)
-- Start responses with "I can help with that..." or similar friendly opener
-- End responses with an offer to help with other questions
+                            RESPONSE STYLE:
+                            - Use a warm, conversational tone 
+                            - Format numerical information with simple dashes (-)
+                            - Start responses with "I can help with that..." or similar friendly opener
+                            - End responses with an offer to help with other questions
 
-CONTENT RESTRICTIONS:
-- Only provide information related to North American University
-- Never mention training data or your training process
-- For non-NAU questions, politely redirect: "I can only assist with topics related to North American University."
-- Only provide answers from www.na.edu website, not from the other websites."""
-        
+                            CONTENT RESTRICTIONS:
+                            - Only provide information related to North American University
+                            - Never mention training data or your training process
+                            - For non-NAU questions, politely redirect: "I can only assist with topics related to North American University."
+                            - Only provide answers from www.na.edu website, not from the other websites."""
+
         context = json.dumps(create_minimal_knowledge_base())
-        
-        # Try to use web search with a different approach
+
+        # First attempt: Claude with web search tool
         try:
-            # Use web search with minimal options
-            response = client.chat.completions.create(
-                model="gpt-4o-search-preview",  # Using the search-capable model
-                web_search_options={},  # Minimal web search options
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Please find information about North American University regarding this question: {query}"}
+            response = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=1024,
+                system=system_prompt,
+                tools=[
+                    {
+                        "type": "web_search_20250305",
+                        "name": "web_search",
+                        "max_uses": 3
+                    }
                 ],
-                temperature=0
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"Please find information about North American University regarding this question: {query}"
+                    }
+                ]
             )
-            
-            answer = response.choices[0].message.content
-            logger.info("Successfully received response from backup web search")
-            
-            # Extract any available sources
+
+            # Extract text from content blocks
+            answer = ""
             sources = []
-            if hasattr(response.choices[0].message, 'annotations'):
-                for annotation in response.choices[0].message.annotations:
-                    if hasattr(annotation, 'type') and annotation.type == 'url_citation':
-                        if hasattr(annotation, 'url_citation') and hasattr(annotation.url_citation, 'url'):
-                            sources.append(annotation.url_citation.url)
-            
-            # Use default source if none found
+            for block in response.content:
+                if block.type == "text":
+                    answer += block.text
+
+            # Extract any URLs from tool result blocks
+            for block in response.content:
+                if hasattr(block, "content") and isinstance(block.content, list):
+                    for item in block.content:
+                        if hasattr(item, "type") and item.type == "text":
+                            found_urls = re.findall(r'https?://[^\s\)\]\"]+', item.text)
+                            sources.extend(found_urls)
+
+            sources = list(dict.fromkeys(sources))  # Deduplicate
             if not sources:
                 sources = ["https://www.na.edu"]
-                
+
+            logger.info("Successfully received response from Claude backup web search")
             return {
                 "answer": answer,
                 "sources": sources
             }
-            
+
         except Exception as web_search_error:
-            logger.error(f"Backup web search failed: {str(web_search_error)}")
-            
-            # Final fallback to standard model with our knowledge base
-            response = client.chat.completions.create(
-                model="gpt-4o",  # Standard model as last resort
+            logger.error(f"Claude backup web search failed: {str(web_search_error)}")
+
+            # Final fallback: Claude with local knowledge base only (no web search)
+            response = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=1024,
+                system=system_prompt,
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Context about North American University: {context}\n\nUser Question: {query}"}
-                ],
-                temperature=0
+                    {
+                        "role": "user",
+                        "content": f"Context about North American University: {context}\n\nUser Question: {query}"
+                    }
+                ]
             )
-            
-            answer = response.choices[0].message.content
-            logger.info("Successfully received response from standard OpenAI API")
+
+            answer = ""
+            for block in response.content:
+                if block.type == "text":
+                    answer += block.text
+
+            logger.info("Successfully received response from Claude standard API")
             return {
                 "answer": answer,
                 "sources": ["https://www.na.edu"]
             }
-            
+
     except Exception as fallback_error:
         logger.error(f"Fallback API error: {str(fallback_error)}")
         return {
@@ -751,11 +762,11 @@ async def chat():
             return jsonify(response_data)
         
         else:
-            # No predefined answer, use OpenAI web search
+            # No predefined answer, use CLaude web search
             logger.info("No predefined answer found, using web search...")
             
             try:
-                search_result = await search_web_with_openai(query)
+                search_result = await search_web_with_claude(query)
                 answer = search_result["answer"]
                 sources = search_result["sources"]
 
